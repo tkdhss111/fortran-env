@@ -1,7 +1,10 @@
 ! Thin environment-variable tool for the tkd fleet. One-concept tool, same shape
-! as cli_mo / logger_mo. Resolves data-path registry variables
+! as cli_mo / logger_mo. Portable across gfortran and ifx: pure Fortran except a
+! single libc `setenv` binding (the only way to *write* the environment from
+! Fortran). Resolves data-path registry variables
 ! (/srv/data/tkd-config/data-paths.env, injected by a quadlet EnvironmentFile or
 ! `source`) with a compiled fallback, via ONE polymorphic getter — no get_<type>.
+!
 ! It can also INGEST a Fortran namelist file, setting each `KEY = VALUE` as an env
 ! var. Env names can't hold `%` or `()`, so the key is mangled to a flat name —
 ! every structural separator becomes `_`:
@@ -11,17 +14,23 @@
 !     NML%DIR%WTHR_OBS  ->  NML_DIR_WTHR_OBS
 !     NML%N(1)%TGTS     ->  NML_N_1_TGTS
 !
+! save() writes back out the variables env_mo has set (via set / load /
+! load_namelist) as a `.env` file — so what you loaded round-trips, and ambient
+! secrets you never touched (API keys, etc.) are never dumped.
+!
 ! Usage:
 !   use env_mo
 !   type(env_ty)   :: env
 !   integer        :: n   = 1
 !   real           :: x   = 90.0
-!   logical        :: ok  = .false.
 !   character(255) :: dir = '/srv/data/default'
 !   call env%get ( 'FOR_COARRAY_NUM_IMAGES', n )         ! any scalar type; n kept if unset
 !   call env%get ( 'HALFLIFE_DAYS', x, 90.0 )            ! explicit default also accepted
 !   call env%override ( dir, 'DIR_TKD_WX_JMA_AMEDAS' )   ! registry no-op override (get alias)
 !   n   = env%load_namelist ( 'config.nml' )             ! namelist file -> env vars
+!   n   = env%load ( 'data-paths.env' )                  ! .env file -> env vars (KEY=VALUE)
+!   n   = env%save ( 'out.env', 'DIR_TKD_' )             ! set/loaded vars -> .env (prefix-filtered)
+!   if ( .not. env%is_name ( key ) ) ...                 ! validate an env-var name
 !   key = env%require ( 'OPENMETEO_APIKEY' )             ! required string, else error stop
 
 module env_mo
@@ -33,8 +42,19 @@ module env_mo
   private
   public :: env_ty
 
-  integer, parameter :: MAXLEN = 4096          ! generous: long store paths, API keys
-  integer, parameter :: dp     = kind(1.0d0)   ! double-precision get() targets
+  integer, parameter :: MAXLEN  = 4096         ! generous: long store paths, API keys
+  integer, parameter :: MAXNAME = 255          ! tracked env-var name length
+  integer, parameter :: dp      = kind(1.0d0)  ! double-precision get() targets
+
+  ! Permitted characters in a POSIX environment-variable name.
+  character(*), parameter :: NAME_HEAD = &
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_'
+  character(*), parameter :: NAME_BODY = NAME_HEAD//'0123456789'
+
+  ! Names this module has set — the set save() writes back out. Module-scope
+  ! (saved) state; single-threaded use, one coarray image per process.
+  character(MAXNAME), allocatable, save :: g_names(:)
+  integer,                         save :: g_count = 0
 
   ! libc setenv — the only portable way to *set* an env var from Fortran.
   interface
@@ -51,10 +71,14 @@ module env_mo
     procedure, nopass :: get           => env_get            ! polymorphic getter (any scalar type)
     procedure, nopass :: override      => env_override       ! in-place registry override (get alias)
     procedure, nopass :: is_set        => env_is_set
+    procedure, nopass :: is_name       => env_is_name        ! valid env-var name?
+    procedure, nopass :: bad_char      => env_bad_char       ! first unpermitted char position (0=ok)
     procedure, nopass :: require       => env_require        ! required string, else error stop
-    procedure, nopass :: set           => env_set            ! setenv one variable
+    procedure, nopass :: set           => env_set            ! setenv one variable (tracked)
     procedure, nopass :: mangle_key    => env_mangle_key     ! namelist key -> env name
     procedure, nopass :: load_namelist => env_load_namelist  ! namelist file -> env vars
+    procedure, nopass :: load          => env_load           ! .env file  -> env vars
+    procedure, nopass :: save          => env_save           ! set/loaded vars -> .env file
   end type
 
 contains
@@ -79,6 +103,31 @@ contains
       str = trim(val)
     else
       str = ''
+    end if
+  end function
+
+  ! Valid POSIX env-var name: first char a letter or '_', the rest also digits.
+  logical function env_is_name ( name ) result ( ok )
+    character(*), intent(in) :: name
+    integer :: n
+    n  = len_trim(name)
+    ok = .false.
+    if ( n == 0 )                            return
+    if ( verify ( name(1:1), NAME_HEAD ) /= 0 ) return
+    if ( verify ( name(1:n), NAME_BODY ) /= 0 ) return
+    ok = .true.
+  end function
+
+  ! Detect unpermitted characters: position of the first char of `str` NOT in
+  ! `allowed` (0 = all permitted). With no `allowed`, checks the env-name charset
+  ! (letters, digits, '_'). Handy to validate a config value before set/save.
+  integer function env_bad_char ( str, allowed ) result ( pos )
+    character(*), intent(in)           :: str
+    character(*), intent(in), optional :: allowed
+    if ( present(allowed) ) then
+      pos = verify ( trim(str), allowed )
+    else
+      pos = verify ( trim(str), NAME_BODY )
     end if
   end function
 
@@ -163,11 +212,33 @@ contains
     end if
   end function
 
-  ! Set (or overwrite) $name in the current process (inherited by child processes).
+  ! Remember a name (deduped) so save() can write it back out later.
+  subroutine env_track ( name )
+    character(*), intent(in) :: name
+    character(MAXNAME), allocatable :: tmp(:)
+    integer :: i, cap
+    do i = 1, g_count
+      if ( g_names(i) == name ) return                 ! already tracked
+    end do
+    if ( .not. allocated ( g_names ) ) allocate ( g_names(16) )
+    cap = size ( g_names )
+    if ( g_count == cap ) then                         ! grow x2
+      allocate ( tmp(2*cap) )
+      tmp(1:cap) = g_names
+      call move_alloc ( tmp, g_names )
+    end if
+    g_count = g_count + 1
+    g_names(g_count) = name
+  end subroutine
+
+  ! Set (or overwrite) $name in the current process (inherited by child processes)
+  ! and remember it for save(). Names that aren't valid identifiers are ignored.
   subroutine env_set ( name, value )
     character(*), intent(in) :: name, value
     integer(c_int) :: r
+    if ( .not. env_is_name ( name ) ) return
     r = c_setenv ( trim(name)//c_null_char, trim(value)//c_null_char, 1_c_int )
+    call env_track ( trim(name) )
   end subroutine
 
   ! Fortran namelist key -> env-var name: '%' and array subscripts collapse to '_'.
@@ -197,8 +268,8 @@ contains
 
   ! Ingest a Fortran namelist FILE: each `KEY = VALUE` line becomes an env var
   ! named mangle_key(KEY). De-quotes strings, drops a trailing comma or inline
-  ! `! comment`, and skips &group / '/' / blank / comment lines. Optional `prefix`
-  ! is prepended to every env name. Returns the number of variables set.
+  ! `! comment`, and skips &group / '/' / blank / comment / malformed-name lines.
+  ! Optional `prefix` is prepended to every env name. Returns the number set.
   function env_load_namelist ( file, prefix ) result ( nset )
     character(*), intent(in)           :: file
     character(*), intent(in), optional :: prefix
@@ -231,8 +302,76 @@ contains
       end if
       name = env_mangle_key ( key )
       if ( present(prefix) ) name = prefix//name
+      if ( .not. env_is_name ( name ) ) cycle          ! skip keys that don't mangle to a valid name
       call env_set ( name, val )
       nset = nset + 1
+    end do
+    close ( u )
+  end function
+
+  ! Read a plain `.env` file (`KEY=VALUE` per line) and set each variable — the
+  ! inverse of save. Skips blank / `#` / `!` comment / invalid-name lines, strips
+  ! an optional leading `export `, and de-quotes a fully "..."/'...'-quoted value.
+  ! Returns the number of variables set.
+  function env_load ( file ) result ( nset )
+    character(*), intent(in) :: file
+    integer :: nset, u, ios, eq
+    character(MAXLEN)         :: line
+    character(:), allocatable :: key, val
+    character                 :: q
+    nset = 0
+    open ( newunit = u, file = file, status = 'old', action = 'read', iostat = ios )
+    if ( ios /= 0 ) return
+    do
+      read ( u, '(a)', iostat = ios ) line
+      if ( ios /= 0 ) exit
+      line = adjustl ( line )
+      if ( len_trim(line) == 0 )          cycle
+      if ( scan ( line(1:1), '#!' ) > 0 ) cycle        ! comment line
+      if ( line(1:7) == 'export ' ) line = adjustl ( line(8:) )   ! optional export prefix
+      eq = index ( line, '=' )
+      if ( eq <= 1 ) cycle
+      key = trim ( adjustl ( line(1:eq-1) ) )
+      val = trim ( adjustl ( line(eq+1:) ) )
+      if ( len(val) >= 2 ) then                        ! de-quote "..." / '...'
+        q = val(1:1)
+        if ( ( q == '"' .or. q == "'" ) .and. val(len(val):len(val)) == q ) &
+          val = val(2:len(val)-1)
+      end if
+      if ( .not. env_is_name ( key ) ) cycle           ! skip malformed keys
+      call env_set ( key, val )
+      nset = nset + 1
+    end do
+    close ( u )
+  end function
+
+  ! Write the variables env_mo has set/loaded to `file` in .env format — one
+  ! `KEY=VALUE` per line, exactly what a quadlet EnvironmentFile / podman
+  ! --env-file / `source` consume. With `prefix`, only names starting with it are
+  ! written. Values are read live, so overwrites are reflected. Returns the count.
+  function env_save ( file, prefix ) result ( nwritten )
+    character(*), intent(in)           :: file
+    character(*), intent(in), optional :: prefix
+    integer :: nwritten, u, i, ios
+    character(:), allocatable :: pfx, nm, val
+    logical :: keep
+    nwritten = 0
+    pfx = ''
+    if ( present(prefix) ) pfx = prefix
+    open ( newunit = u, file = file, status = 'replace', action = 'write', iostat = ios )
+    if ( ios /= 0 ) return
+    do i = 1, g_count
+      nm   = trim ( g_names(i) )
+      keep = .true.
+      if ( len(pfx) > 0 ) then
+        keep = .false.
+        if ( len(nm) >= len(pfx) ) keep = ( nm(1:len(pfx)) == pfx )
+      end if
+      if ( keep ) then
+        val = env_raw ( nm )
+        write ( u, '(a)' ) nm//'='//val
+        nwritten = nwritten + 1
+      end if
     end do
     close ( u )
   end function

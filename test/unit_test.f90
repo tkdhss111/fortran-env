@@ -4,12 +4,14 @@ program unit_test
 
   implicit none
 
-  type(env_ty)   :: env
-  character(255) :: path, cstr
-  integer        :: ival, n, u
-  real           :: rval
-  logical        :: lval
-  integer        :: nfail = 0
+  type(env_ty)    :: env
+  character(255)  :: path, cstr
+  character(4096) :: line
+  integer         :: ival, n, u, ios
+  real            :: rval
+  real(kind(1d0)) :: dval
+  logical         :: lval, found, secret_leaked
+  integer         :: nfail = 0
 
   print *, '===== fortran-env unit test ====='
 
@@ -20,6 +22,8 @@ program unit_test
   call check_i ( ival, 7, 'get integer keeps default when unset' )
   rval = 2.5        ; call env%get ( 'ENV_MO_UNSET', rval )
   call check_r ( rval, 2.5, 'get real keeps default when unset' )
+  dval = 9.0d0      ; call env%get ( 'ENV_MO_UNSET', dval )
+  call check_r ( real(dval), 9.0, 'get double keeps default when unset' )
   lval = .true.     ; call env%get ( 'ENV_MO_UNSET', lval )
   call check_l ( lval, .true., 'get logical keeps default when unset' )
   call check_l ( env%is_set ( 'ENV_MO_UNSET' ), .false., 'is_set = F when unset' )
@@ -39,6 +43,8 @@ program unit_test
   call check_i ( ival, 42, 'get integer when set' )
   rval = 0.0     ; call env%get ( 'ENV_MO_REAL', rval )
   call check_r ( rval, 3.14, 'get real when set' )
+  dval = 0.0d0   ; call env%get ( 'ENV_MO_REAL', dval )
+  call check_r ( real(dval), 3.14, 'get double when set' )
   lval = .false. ; call env%get ( 'ENV_MO_BOOL', lval )
   call check_l ( lval, .true., 'get logical when set (T)' )
   call check_l ( env%is_set ( 'ENV_MO_STR' ), .true., 'is_set = T when set' )
@@ -47,13 +53,19 @@ program unit_test
   call env%override ( path, 'ENV_MO_PATH' )
   call check_c ( trim(path), '/srv/data/tkd-wx-jma-amedas', 'override applies when set' )
 
+  ! bad parse -> keep default (unchanged)
+  ival = 5 ; call env%get ( 'ENV_MO_STR', ival )   ! 'hello' is not an integer
+  call check_i ( ival, 5, 'get integer keeps default on parse error' )
+
   ! --- 3. require: returns a present var (a missing one would error stop) ---
   call check_c ( env%require ( 'ENV_MO_STR' ), 'hello', 'require returns when set' )
 
   ! --- 4. mangle_key: '%' and array subscripts -> '_' ---
-  call check_c ( env%mangle_key ( 'NML%DIR%WTHR_OBS' ), 'NML_DIR_WTHR_OBS', 'mangle %' )
+  call check_c ( env%mangle_key ( 'NML%DIR%WTHR_OBS' ), 'NML_DIR_WTHR_OBS', 'mangle a%b%c' )
   call check_c ( env%mangle_key ( 'NML%N(1)%TGTS' ),    'NML_N_1_TGTS',     'mangle %(n)%' )
   call check_c ( env%mangle_key ( 'AREAS(1,2)' ),       'AREAS_1_2',        'mangle (i,j)' )
+  call check_c ( env%mangle_key ( 'X(3)' ),             'X_3',              'mangle trailing (i)' )
+  call check_c ( env%mangle_key ( 'FLAT' ),             'FLAT',             'mangle no-op' )
 
   ! --- 5. set: env write -> get roundtrip ---
   call env%set ( 'ENV_MO_ROUNDTRIP', '/some/path' )
@@ -76,6 +88,65 @@ program unit_test
   call check_i ( ival, 24, 'namelist array-index integer' )
   lval = .false. ; call env%get ( 'NML_SHRINK_FLAG', lval )
   call check_l ( lval, .true., 'namelist logical' )
+
+  ! --- 7. save: live environment -> .env file, prefix-filtered ---
+  call env%set ( 'ENV_MO_SECRET_KEY', 'do-not-leak' )   ! a non-NML_ var that must NOT be written
+  n = env%save ( 'env_mo_out.env', 'NML_' )
+  call check_i ( n, 3, 'save writes exactly the 3 NML_ vars' )
+  found = .false. ; secret_leaked = .false.
+  open ( newunit = u, file = 'env_mo_out.env', status = 'old', action = 'read' )
+  do
+    read ( u, '(a)', iostat = ios ) line
+    if ( ios /= 0 ) exit
+    if ( trim(line) == 'NML_DIR_WTHR_OBS=/srv/data/jma=amedas' ) found = .true.
+    if ( index ( line, 'ENV_MO_SECRET_KEY' ) > 0 )               secret_leaked = .true.
+  end do
+  close ( u )
+  call check_l ( found, .true., 'save wrote the exact KEY=VALUE line' )
+  call check_l ( secret_leaked, .false., 'prefix filter keeps non-matching (secret) vars out' )
+
+  ! --- 8. load: .env file -> env vars (inverse of save; keys used verbatim) ---
+  open ( newunit = u, file = 'env_mo_in.env', status = 'replace', action = 'write' )
+  write ( u, '(a)' ) '# a comment line'
+  write ( u, '(a)' ) '! also a comment'
+  write ( u, '(a)' ) ''
+  write ( u, '(a)' ) 'DIR_TKD_DATA=/srv/data'
+  write ( u, '(a)' ) 'export ENV_MO_N=8'
+  write ( u, '(a)' ) 'QUOTED_VAL="hello world"'
+  write ( u, '(a)' ) 'BAD-NAME=nope'        ! hyphen -> not a valid env name, skipped
+  write ( u, '(a)' ) '9LEADING=nope'        ! leading digit -> skipped
+  close ( u )
+  n = env%load ( 'env_mo_in.env' )
+  call check_i ( n, 3, 'load sets 3 valid vars (comments/blank/bad-name skipped)' )
+  cstr = '' ; call env%get ( 'DIR_TKD_DATA', cstr )
+  call check_c ( trim(cstr), '/srv/data', 'load plain KEY=VALUE' )
+  ival = 0  ; call env%get ( 'ENV_MO_N', ival )
+  call check_i ( ival, 8, 'load strips `export ` and parses int' )
+  cstr = '' ; call env%get ( 'QUOTED_VAL', cstr )
+  call check_c ( trim(cstr), 'hello world', 'load de-quotes a "..." value' )
+
+  ! --- 9. save -> load round trip (line count integrity) ---
+  call env%set ( 'RT_A', 'alpha' )
+  call env%set ( 'RT_B', 'beta' )
+  n = env%save ( 'env_mo_rt.env', 'RT_' )
+  call check_i ( n, 2, 'round trip: save wrote 2 RT_ vars' )
+  n = env%load ( 'env_mo_rt.env' )
+  call check_i ( n, 2, 'round trip: load read 2 RT_ vars back' )
+
+  ! --- 10. save with no prefix dumps every tracked var (all we set/loaded) ---
+  n = env%save ( 'env_mo_all.env' )
+  call check_l ( n >= 8, .true., 'save without prefix dumps all tracked vars' )
+
+  ! --- 11. validation: is_name / bad_char detect unpermitted characters ---
+  call check_l ( env%is_name ( 'DIR_TKD_DATA' ), .true.,  'is_name accepts a valid name' )
+  call check_l ( env%is_name ( '_PRIVATE' ),     .true.,  'is_name accepts leading underscore' )
+  call check_l ( env%is_name ( '9LEADING' ),     .false., 'is_name rejects a leading digit' )
+  call check_l ( env%is_name ( 'A-B' ),          .false., 'is_name rejects a hyphen' )
+  call check_l ( env%is_name ( '' ),             .false., 'is_name rejects empty' )
+  call check_i ( env%bad_char ( 'OK_NAME_1' ),        0, 'bad_char: clean name -> 0' )
+  call check_i ( env%bad_char ( 'AB*CD' ),            3, 'bad_char: flags * at position 3' )
+  call check_i ( env%bad_char ( 'abc', 'abcdef' ),    0, 'bad_char: custom allowed set, clean' )
+  call check_i ( env%bad_char ( 'abz', 'abcdef' ),    3, 'bad_char: custom allowed set, z at 3' )
 
   print *, '================================='
   if ( nfail == 0 ) then

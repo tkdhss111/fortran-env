@@ -4,8 +4,11 @@ The shared environment-variable tool for the tkd fleet — one concept, same sha
 
 Resolves data-path registry variables (`/srv/data/tkd-config/data-paths.env`, injected via a quadlet
 `EnvironmentFile` or `source`) with a compiled fallback, through **one polymorphic getter** (`class(*)` +
-`select type`) — no `get_integer` / `get_real` / `get_logical` clutter. It can also ingest a Fortran
-namelist file, turning each `KEY = VALUE` into an environment variable.
+`select type`) — no `get_integer` / `get_real` / `get_logical` clutter. It also ingests namelist / `.env`
+files into the environment and writes them back out.
+
+Portable across **gfortran and ifx**: pure Fortran except a single libc `setenv` binding (the one thing
+standard Fortran cannot do). No fragile `environ`/`__environ` symbol tricks.
 
 ## Use
 
@@ -69,6 +72,27 @@ Values are de-quoted, a trailing comma or inline `! comment` is stripped, and `&
 comment lines are skipped. Setting is done through libc `setenv` (via `iso_c_binding`) — visible to this
 process and any children it spawns.
 
+### `.env` round-trip and validation
+
+`load` reads a plain `.env` (`KEY=VALUE` lines, `#`/`!` comments, optional `export `), and `save` writes
+back out — but **only the variables env_mo itself has set/loaded**, never ambient ones. So a loaded config
+round-trips, while secrets you only *read* (via `require`/`get`) are never dumped. `save` never enumerates
+the raw process environment, which keeps it portable and leak-safe.
+
+```fortran
+n = env%load ( '/srv/data/tkd-config/data-paths.env' )   ! .env  -> env vars
+n = env%save ( 'out.env', 'DIR_TKD_' )                   ! tracked DIR_TKD_* -> .env (podman --env-file)
+```
+
+Names are validated on the way in — `load`/`load_namelist` skip any key that isn't a POSIX identifier.
+Check inputs yourself with `is_name` / `bad_char`:
+
+```fortran
+if ( .not. env%is_name ( key ) )   ...                   ! valid env-var name?
+if ( env%bad_char ( value ) /= 0 ) ...                   ! position of first unpermitted char (0 = clean)
+if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own allowed set
+```
+
 ## API (`env_ty`)
 
 | method | behaviour |
@@ -76,10 +100,14 @@ process and any children it spawns.
 | `get(name, val[, default])` | fetch `$name` into `val` (character/integer/real/double/logical); keep `default` or `val`'s incoming value if unset/unparseable |
 | `override(val, name)` | overwrite `val` in place if `$name` set & non-empty; else keep the compiled default (get alias) |
 | `is_set(name)` | true if present & non-empty |
+| `is_name(name)` | true if `name` is a valid POSIX env-var identifier |
+| `bad_char(str[, allowed])` | position of the first char not in `allowed` (default: the env-name charset); `0` = all permitted |
 | `require(name)` | returns `$name` string, or prints + `error stop` if unset |
-| `set(name, value)` | set (or overwrite) `$name` via `setenv` |
+| `set(name, value)` | set/overwrite `$name` via `setenv` and track it for `save` (ignored if `name` invalid) |
 | `mangle_key(key)` | namelist key → env name (`%` and subscripts → `_`) |
-| `load_namelist(file[, prefix])` | read a namelist file; set each `KEY = VALUE` as `mangle_key(KEY)`; returns count |
+| `load_namelist(file[, prefix])` | namelist file → env vars, each key `mangle_key`-ed; returns count |
+| `load(file)` | plain `.env` file → env vars (keys used verbatim); returns count |
+| `save(file[, prefix])` | write tracked (set/loaded) vars to a `.env` file, optionally prefix-filtered; returns count |
 
 ## Test
 
