@@ -11,4 +11,4 @@ add_test ( NAME ${EXE} COMMAND ${EXE} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_D
 
 # env_mo reads the environment, so the test's "set" cases are supplied here.
 set_tests_properties ( ${EXE} PROPERTIES ENVIRONMENT
-  "ENV_MO_STR=hello;ENV_MO_INT=42;ENV_MO_REAL=3.14;ENV_MO_BOOL=T;ENV_MO_PATH=/srv/data/tkd-wx-jma-amedas" )
+  "ENV_MO_STR=hello;ENV_MO_INT=42;ENV_MO_REAL=3.14;ENV_MO_BOOL=T;ENV_MO_PATH=/var/data/app" )

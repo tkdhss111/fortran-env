@@ -1,18 +1,17 @@
 # fortran-env
 
-The shared environment-variable tool for the tkd fleet — one concept, same shape as `fortran-CLI`.
+A small, self-contained environment-variable module for Fortran — one concept, one type (`env_ty`).
 
-Resolves data-path registry variables (`/srv/data/tkd-config/data-paths.env`, injected via a quadlet
-`EnvironmentFile` or `source`) with a compiled fallback, through **one polymorphic getter** (`class(*)` +
-`select type`) — no `get_integer` / `get_real` / `get_logical` clutter. It also ingests namelist / `.env`
-files into the environment and writes them back out.
+Reads variables into any scalar type through **one polymorphic getter** (`class(*)` + `select type`) — no
+`get_integer` / `get_real` / `get_logical` clutter — with a compiled-in default. It also ingests namelist /
+`.env` files into the environment and writes them back out.
 
-Portable across **gfortran and ifx**: pure Fortran except a single libc `setenv` binding (the one thing
-standard Fortran cannot do). No fragile `environ`/`__environ` symbol tricks.
+Portable across **gfortran and ifx**: pure Fortran except a single libc `setenv`/`unsetenv` binding (the one
+thing standard Fortran cannot do). No fragile `environ`/`__environ` symbol tricks.
 
 ## Use
 
-Vendor `src/env_mo.f90` into your project's `app/` (like `cli_mo.f90`) and add it to `${SRCS}`.
+Copy `src/env_mo.f90` into your project (or add it as a submodule) and compile it with your sources.
 
 ```fortran
 use env_mo
@@ -20,17 +19,17 @@ type(env_ty)   :: env
 integer        :: n   = 1
 real           :: x   = 90.0
 logical        :: ok  = .false.
-character(255) :: dir = '/srv/data/default'
+character(255) :: dir = '/var/data/default'
 
 ! One getter for every scalar type — val is intent(inout), so it doubles as the default.
-call env%get ( 'FOR_COARRAY_NUM_IMAGES', n )        ! n stays 1 if unset/unparseable
+call env%get ( 'NUM_THREADS', n )                   ! n stays 1 if unset/unparseable
 call env%get ( 'HALFLIFE_DAYS', x, 90.0 )           ! or pass the default explicitly
-call env%get ( 'IS_EVAL', ok )
+call env%get ( 'VERBOSE', ok )
 
-! Registry no-op override (get with args swapped): overwrite in place only when set.
-call env%override ( dir, 'DIR_TKD_WX_JMA_AMEDAS' )
+! Override (get with args swapped): overwrite in place only when the var is set.
+call env%override ( dir, 'DATA_DIR' )
 
-key = env%require ( 'OPENMETEO_APIKEY' )            ! error stop if unset (secrets / critical config)
+key = env%require ( 'API_KEY' )                     ! error stop if unset (secrets / critical config)
 ```
 
 ### Namelist → environment variables
@@ -46,26 +45,25 @@ array element. To flatten that path into a single flat env-var name, every struc
 | `%` (component of a derived type) | → `_` | `a%b` → `a_b` |
 | `(i)` (array subscript) | parens drop, index kept | `a(1)` → `a_1` |
 | `(i,j)` (multi-dim subscript) | comma → `_` | `a(1,2)` → `a_1_2` |
-| combination | applied left to right, no doubled `_` | `NML%N(1)%TGTS` → `NML_N_1_TGTS` |
+| combination | applied left to right, no doubled `_` | `NML%N(1)%ITEM` → `NML_N_1_ITEM` |
 
 So a namelist like
 
 ```fortran
 &config
-  NML%DIR%WTHR_OBS = "/srv/data/jma=amedas"
-  NML%N(1)%TGTS    = 24
-  NML%SHRINK%FLAG  = T
+  NML%DIR%INPUT = "/var/data/input"
+  NML%N(1)%ITEM = 24
+  NML%FLAG      = T
 /
 ```
 
-becomes the environment variables `NML_DIR_WTHR_OBS=/srv/data/jma=amedas`, `NML_N_1_TGTS=24`,
-`NML_SHRINK_FLAG=T`.
+becomes the environment variables `NML_DIR_INPUT=/var/data/input`, `NML_N_1_ITEM=24`, `NML_FLAG=T`.
 
 ```fortran
 n = env%load_namelist ( 'config.nml' )                 ! returns the count set
-call env%get ( 'NML_DIR_WTHR_OBS', dir )               ! read it back (any type)
+call env%get ( 'NML_DIR_INPUT', dir )                  ! read it back (any type)
 
-call env%set ( 'DIR_TKD_WX_JMA_AMEDAS', '/srv/data/tkd-wx-jma-amedas' )  ! set one var
+call env%set ( 'DATA_DIR', '/var/data' )               ! set one var
 ```
 
 Values are de-quoted, a trailing comma or inline `! comment` is stripped, and `&group` / `/` / blank /
@@ -80,19 +78,19 @@ round-trips, while secrets you only *read* (via `require`/`get`) are never dumpe
 the raw process environment, which keeps it portable and leak-safe.
 
 ```fortran
-n = env%load ( '/srv/data/tkd-config/data-paths.env' )   ! .env  -> env vars ($VAR expanded)
-n = env%save ( 'out.env', 'DIR_TKD_' )                   ! tracked DIR_TKD_* -> .env (podman --env-file)
-n = env%save_sh  ( 'setenv.sh',   'DIR_TKD_' )           ! ... or a runnable `export` script — `source` it
-n = env%clear_sh ( 'clearenv.sh', 'DIR_TKD_' )           ! ... and its undo: a runnable `unset` script
+n = env%load ( 'config.env' )                            ! .env  -> env vars ($VAR expanded)
+n = env%save ( 'out.env', 'APP_' )                       ! tracked APP_* -> .env (systemd/container env-file)
+n = env%save_sh  ( 'setenv.sh',   'APP_' )               ! ... or a runnable `export` script — `source` it
+n = env%clear_sh ( 'clearenv.sh', 'APP_' )               ! ... and its undo: a runnable `unset` script
 call env%unset ( 'TMP_VAR' )                             ! unsetenv + untrack
 ```
 
 **Variable expansion.** `load` / `load_namelist` expand `$VAR` and `${VAR}` in values against the vars set
-so far (line by line, like `source`), an unset reference becoming empty. So the registry's
-`DIR_TKD_AMEDAS=$DIR_DATA/tkd-wx-jma-amedas` resolves in-process — `env_mo` can replace the
-`gen-resolved-paths.sh` generator. Use `expand` directly for one string.
+so far (line by line, like `source`), an unset reference becoming empty. So a config file with
+`CACHE_DIR=$DATA_DIR/cache` resolves in-process, letting `env_mo` stand in for a shell that would otherwise
+pre-expand the file. Use `expand` directly for one string.
 
-**Three writers.** `save` emits plain `KEY=VALUE` (podman `--env-file`, quadlet `EnvironmentFile`);
+**Three writers.** `save` emits plain `KEY=VALUE` (a systemd `EnvironmentFile`, a container `--env-file`);
 `save_sh` emits a runnable `#!/bin/sh` script of `export NAME='value'` lines (sh-safe quoting, marked
 executable) that you `source` to set the vars in your shell; `clear_sh` emits the matching `unset NAME`
 script to clear them again.
@@ -128,6 +126,82 @@ if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own a
 
 ## Test
 
+`make test` builds the suite and runs it under `ctest`. 62 assertions cover every method — the polymorphic
+getter across all scalar types, namelist mangling, `.env` load/save round-trips, `$VAR` expansion, name
+validation, and the shell-script writers. All pass on **gfortran** and **ifx**.
+
 ```
 make test
 ```
+
+<details>
+<summary><b>Test output</b> — 62/62 assertions pass</summary>
+
+```
+===== fortran-env unit test =====
+PASS  get character keeps default when unset
+PASS  get integer keeps default when unset
+PASS  get real keeps default when unset
+PASS  get double keeps default when unset
+PASS  get logical keeps default when unset
+PASS  is_set = F when unset
+PASS  get integer uses explicit default when unset
+PASS  override no-op when unset
+PASS  get character when set
+PASS  get integer when set
+PASS  get real when set
+PASS  get double when set
+PASS  get logical when set (T)
+PASS  is_set = T when set
+PASS  override applies when set
+PASS  get integer keeps default on parse error
+PASS  require returns when set
+PASS  mangle a%b%c
+PASS  mangle %(n)%
+PASS  mangle (i,j)
+PASS  mangle trailing (i)
+PASS  mangle no-op
+PASS  set + get roundtrip
+PASS  load_namelist sets 3 vars
+PASS  namelist % path (comment/comma stripped)
+PASS  namelist array-index integer
+PASS  namelist logical
+PASS  save writes exactly the 3 NML_ vars
+PASS  save wrote the exact KEY=VALUE line
+PASS  prefix filter keeps non-matching (secret) vars out
+PASS  load sets 3 valid vars (comments/blank/bad-name skipped)
+PASS  load plain KEY=VALUE
+PASS  load strips `export ` and parses int
+PASS  load de-quotes a "..." value
+PASS  round trip: save wrote 2 RT_ vars
+PASS  round trip: load read 2 RT_ vars back
+PASS  save without prefix dumps all tracked vars
+PASS  is_name accepts a valid name
+PASS  is_name accepts leading underscore
+PASS  is_name rejects a leading digit
+PASS  is_name rejects a hyphen
+PASS  is_name rejects empty
+PASS  bad_char: clean name -> 0
+PASS  bad_char: flags * at position 3
+PASS  bad_char: custom allowed set, clean
+PASS  bad_char: custom allowed set, z at 3
+PASS  expand $VAR
+PASS  expand ${VAR}
+PASS  expand undefined $VAR -> empty
+PASS  literal $ (not a ref) kept
+PASS  load with expansion: 3 vars
+PASS  load expands $VAR to a prior var
+PASS  load expands undefined ${VAR} to empty
+PASS  set before unset
+PASS  unset removes the var
+PASS  unset also untracks (save skips it)
+PASS  save_sh writes 2 SH_ vars
+PASS  save_sh wrote a plain export line
+PASS  save_sh escaped an embedded single quote
+PASS  clear_sh writes 2 unset lines
+PASS  clear_sh wrote an unset line
+=================================
+ALL TESTS PASSED
+```
+
+</details>

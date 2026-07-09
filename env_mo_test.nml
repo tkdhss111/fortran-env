@@ -1,0 +1,5 @@
+&config
+  NML%DIR%WTHR_OBS = "/var/data/input",   ! obs store
+  NML%N(1)%TGTS    = 24
+  NML%SHRINK%FLAG  = T
+/

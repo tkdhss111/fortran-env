@@ -1,9 +1,8 @@
-! Thin environment-variable tool for the tkd fleet. One-concept tool, same shape
-! as cli_mo / logger_mo. Portable across gfortran and ifx: pure Fortran except a
-! single libc `setenv` binding (the only way to *write* the environment from
-! Fortran). Resolves data-path registry variables
-! (/srv/data/tkd-config/data-paths.env, injected by a quadlet EnvironmentFile or
-! `source`) with a compiled fallback, via ONE polymorphic getter — no get_<type>.
+! env_mo — a small, self-contained environment-variable module for Fortran.
+! One concept, one type (env_ty). Portable across gfortran and ifx: pure Fortran
+! except a single libc `setenv`/`unsetenv` binding (the one thing standard Fortran
+! cannot do). Reads variables into any scalar type through ONE polymorphic getter
+! (no get_integer / get_real / get_logical clutter), with a compiled-in default.
 !
 ! It can also INGEST a Fortran namelist file, setting each `KEY = VALUE` as an env
 ! var. Env names can't hold `%` or `()`, so the key is mangled to a flat name —
@@ -11,8 +10,8 @@
 !     a%b     ->  a_b        ( `%` derived-type component  -> `_` )
 !     a(1)    ->  a_1        ( `(i)` array subscript        -> `_i` )
 !     a(1,2)  ->  a_1_2      ( `(i,j)` multi-dim subscript  -> `_i_j` )
-!     NML%DIR%WTHR_OBS  ->  NML_DIR_WTHR_OBS
-!     NML%N(1)%TGTS     ->  NML_N_1_TGTS
+!     NML%DIR%INPUT  ->  NML_DIR_INPUT
+!     NML%N(1)%ITEM  ->  NML_N_1_ITEM
 !
 ! save() writes back out the variables env_mo has set (via set / load /
 ! load_namelist) as a `.env` file — so what you loaded round-trips, and ambient
@@ -23,18 +22,18 @@
 !   type(env_ty)   :: env
 !   integer        :: n   = 1
 !   real           :: x   = 90.0
-!   character(255) :: dir = '/srv/data/default'
-!   call env%get ( 'FOR_COARRAY_NUM_IMAGES', n )         ! any scalar type; n kept if unset
+!   character(255) :: dir = '/var/data/default'
+!   call env%get ( 'NUM_THREADS', n )                    ! any scalar type; n kept if unset
 !   call env%get ( 'HALFLIFE_DAYS', x, 90.0 )            ! explicit default also accepted
-!   call env%override ( dir, 'DIR_TKD_WX_JMA_AMEDAS' )   ! registry no-op override (get alias)
+!   call env%override ( dir, 'DATA_DIR' )                ! overwrite in place only when set
 !   n   = env%load_namelist ( 'config.nml' )             ! namelist file -> env vars
-!   n   = env%load ( 'data-paths.env' )                  ! .env file -> env vars ($VAR expanded)
-!   n   = env%save ( 'out.env', 'DIR_TKD_' )             ! set/loaded vars -> .env (prefix-filtered)
-!   n   = env%save_sh ( 'setenv.sh', 'DIR_TKD_' )        ! runnable `export` script (source it)
-!   n   = env%clear_sh ( 'clearenv.sh', 'DIR_TKD_' )     ! runnable `unset` script (source it to clear)
+!   n   = env%load ( 'config.env' )                      ! .env file -> env vars ($VAR expanded)
+!   n   = env%save ( 'out.env', 'APP_' )                 ! set/loaded vars -> .env (prefix-filtered)
+!   n   = env%save_sh ( 'setenv.sh', 'APP_' )            ! runnable `export` script (source it)
+!   n   = env%clear_sh ( 'clearenv.sh', 'APP_' )         ! runnable `unset` script (source it to clear)
 !   call env%unset ( 'TMP_VAR' )                         ! unsetenv + untrack
 !   if ( .not. env%is_name ( key ) ) ...                 ! validate an env-var name
-!   key = env%require ( 'OPENMETEO_APIKEY' )             ! required string, else error stop
+!   key = env%require ( 'API_KEY' )                      ! required string, else error stop
 
 module env_mo
 
@@ -77,7 +76,7 @@ module env_mo
   type env_ty
   contains
     procedure, nopass :: get           => env_get            ! polymorphic getter (any scalar type)
-    procedure, nopass :: override      => env_override       ! in-place registry override (get alias)
+    procedure, nopass :: override      => env_override       ! in-place override, only if set (get alias)
     procedure, nopass :: is_set        => env_is_set
     procedure, nopass :: is_name       => env_is_name        ! valid env-var name?
     procedure, nopass :: bad_char      => env_bad_char       ! first unpermitted char position (0=ok)
@@ -421,7 +420,7 @@ contains
   end function
 
   ! Write the variables env_mo has set/loaded to `file` in .env format — one
-  ! `KEY=VALUE` per line, exactly what a quadlet EnvironmentFile / podman
+  ! `KEY=VALUE` per line, exactly what a systemd EnvironmentFile / a container
   ! --env-file / `source` consume. With `prefix`, only names starting with it are
   ! written. Values are read live, so overwrites are reflected. Returns the count.
   function env_save ( file, prefix ) result ( nwritten )

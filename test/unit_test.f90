@@ -32,9 +32,9 @@ program unit_test
   call env%get ( 'ENV_MO_UNSET', ival, 99 )
   call check_i ( ival, 99, 'get integer uses explicit default when unset' )
 
-  path = '/srv/data/compiled-default'
+  path = '/var/data/compiled-default'
   call env%override ( path, 'ENV_MO_UNSET' )
-  call check_c ( trim(path), '/srv/data/compiled-default', 'override no-op when unset' )
+  call check_c ( trim(path), '/var/data/compiled-default', 'override no-op when unset' )
 
   ! --- 2. SET variables (provided by ctest ENVIRONMENT in test/CMakeLists.txt) ---
   cstr = ''      ; call env%get ( 'ENV_MO_STR',  cstr )
@@ -49,9 +49,9 @@ program unit_test
   call check_l ( lval, .true., 'get logical when set (T)' )
   call check_l ( env%is_set ( 'ENV_MO_STR' ), .true., 'is_set = T when set' )
 
-  path = '/srv/data/compiled-default'
+  path = '/var/data/compiled-default'
   call env%override ( path, 'ENV_MO_PATH' )
-  call check_c ( trim(path), '/srv/data/tkd-wx-jma-amedas', 'override applies when set' )
+  call check_c ( trim(path), '/var/data/app', 'override applies when set' )
 
   ! bad parse -> keep default (unchanged)
   ival = 5 ; call env%get ( 'ENV_MO_STR', ival )   ! 'hello' is not an integer
@@ -75,7 +75,7 @@ program unit_test
   ! --- 6. load_namelist: file -> env vars, keys mangled, values de-quoted ---
   open ( newunit = u, file = 'env_mo_test.nml', status = 'replace', action = 'write' )
   write ( u, '(a)' ) '&config'
-  write ( u, '(a)' ) '  NML%DIR%WTHR_OBS = "/srv/data/jma=amedas",   ! obs store'
+  write ( u, '(a)' ) '  NML%DIR%WTHR_OBS = "/var/data/input",   ! obs store'
   write ( u, '(a)' ) '  NML%N(1)%TGTS    = 24'
   write ( u, '(a)' ) '  NML%SHRINK%FLAG  = T'
   write ( u, '(a)' ) '/'
@@ -83,7 +83,7 @@ program unit_test
   n = env%load_namelist ( 'env_mo_test.nml' )
   call check_i ( n, 3, 'load_namelist sets 3 vars' )
   cstr = '' ; call env%get ( 'NML_DIR_WTHR_OBS', cstr )
-  call check_c ( trim(cstr), '/srv/data/jma=amedas', 'namelist % path (comment/comma stripped)' )
+  call check_c ( trim(cstr), '/var/data/input', 'namelist % path (comment/comma stripped)' )
   ival = 0  ; call env%get ( 'NML_N_1_TGTS', ival )
   call check_i ( ival, 24, 'namelist array-index integer' )
   lval = .false. ; call env%get ( 'NML_SHRINK_FLAG', lval )
@@ -98,7 +98,7 @@ program unit_test
   do
     read ( u, '(a)', iostat = ios ) line
     if ( ios /= 0 ) exit
-    if ( trim(line) == 'NML_DIR_WTHR_OBS=/srv/data/jma=amedas' ) found = .true.
+    if ( trim(line) == 'NML_DIR_WTHR_OBS=/var/data/input' ) found = .true.
     if ( index ( line, 'ENV_MO_SECRET_KEY' ) > 0 )               secret_leaked = .true.
   end do
   close ( u )
@@ -110,7 +110,7 @@ program unit_test
   write ( u, '(a)' ) '# a comment line'
   write ( u, '(a)' ) '! also a comment'
   write ( u, '(a)' ) ''
-  write ( u, '(a)' ) 'DIR_TKD_DATA=/srv/data'
+  write ( u, '(a)' ) 'APP_DATA=/var/data'
   write ( u, '(a)' ) 'export ENV_MO_N=8'
   write ( u, '(a)' ) 'QUOTED_VAL="hello world"'
   write ( u, '(a)' ) 'BAD-NAME=nope'        ! hyphen -> not a valid env name, skipped
@@ -118,8 +118,8 @@ program unit_test
   close ( u )
   n = env%load ( 'env_mo_in.env' )
   call check_i ( n, 3, 'load sets 3 valid vars (comments/blank/bad-name skipped)' )
-  cstr = '' ; call env%get ( 'DIR_TKD_DATA', cstr )
-  call check_c ( trim(cstr), '/srv/data', 'load plain KEY=VALUE' )
+  cstr = '' ; call env%get ( 'APP_DATA', cstr )
+  call check_c ( trim(cstr), '/var/data', 'load plain KEY=VALUE' )
   ival = 0  ; call env%get ( 'ENV_MO_N', ival )
   call check_i ( ival, 8, 'load strips `export ` and parses int' )
   cstr = '' ; call env%get ( 'QUOTED_VAL', cstr )
@@ -138,7 +138,7 @@ program unit_test
   call check_l ( n >= 8, .true., 'save without prefix dumps all tracked vars' )
 
   ! --- 11. validation: is_name / bad_char detect unpermitted characters ---
-  call check_l ( env%is_name ( 'DIR_TKD_DATA' ), .true.,  'is_name accepts a valid name' )
+  call check_l ( env%is_name ( 'APP_DATA' ), .true.,  'is_name accepts a valid name' )
   call check_l ( env%is_name ( '_PRIVATE' ),     .true.,  'is_name accepts leading underscore' )
   call check_l ( env%is_name ( '9LEADING' ),     .false., 'is_name rejects a leading digit' )
   call check_l ( env%is_name ( 'A-B' ),          .false., 'is_name rejects a hyphen' )
@@ -149,22 +149,22 @@ program unit_test
   call check_i ( env%bad_char ( 'abz', 'abcdef' ),    3, 'bad_char: custom allowed set, z at 3' )
 
   ! --- 12. expand: $VAR / ${VAR} against the environment, unset -> '' ---
-  call env%set ( 'EXP_BASE', '/srv/data' )
-  call check_c ( env%expand ( '$EXP_BASE/sub' ),   '/srv/data/sub', 'expand $VAR' )
-  call check_c ( env%expand ( '${EXP_BASE}/sub' ), '/srv/data/sub', 'expand ${VAR}' )
+  call env%set ( 'EXP_BASE', '/var/data' )
+  call check_c ( env%expand ( '$EXP_BASE/sub' ),   '/var/data/sub', 'expand $VAR' )
+  call check_c ( env%expand ( '${EXP_BASE}/sub' ), '/var/data/sub', 'expand ${VAR}' )
   call check_c ( env%expand ( '$NOPE_XYZ/tail' ),  '/tail',         'expand undefined $VAR -> empty' )
   call check_c ( env%expand ( 'cost is $5' ),      'cost is $5',    'literal $ (not a ref) kept' )
 
   ! --- 13. load with expansion: later lines resolve earlier ones (source order) ---
   open ( newunit = u, file = 'env_mo_exp.env', status = 'replace', action = 'write' )
-  write ( u, '(a)' ) 'EXP_ROOT=/srv/data'
-  write ( u, '(a)' ) 'EXP_LEAF=$EXP_ROOT/tkd-wx'
+  write ( u, '(a)' ) 'EXP_ROOT=/var/data'
+  write ( u, '(a)' ) 'EXP_LEAF=$EXP_ROOT/app'
   write ( u, '(a)' ) 'EXP_MISS=${NOPE_ABC}/x'
   close ( u )
   n = env%load ( 'env_mo_exp.env' )
   call check_i ( n, 3, 'load with expansion: 3 vars' )
   cstr = '' ; call env%get ( 'EXP_LEAF', cstr )
-  call check_c ( trim(cstr), '/srv/data/tkd-wx', 'load expands $VAR to a prior var' )
+  call check_c ( trim(cstr), '/var/data/app', 'load expands $VAR to a prior var' )
   cstr = '' ; call env%get ( 'EXP_MISS', cstr )
   call check_c ( trim(cstr), '/x', 'load expands undefined ${VAR} to empty' )
 
