@@ -32,14 +32,31 @@ key = env%require ( 'OPENMETEO_APIKEY' )            ! error stop if unset (secre
 
 ### Namelist → environment variables
 
-Ingest a Fortran namelist file; each `KEY = VALUE` becomes an env var, the key mangled to a valid name
-(`%` and array subscripts collapse to `_`):
+Ingest a Fortran namelist file; each `KEY = VALUE` becomes an env var. Environment-variable names cannot
+contain `%` or `()`, so the namelist key is **mangled** into a valid name.
 
+**Why:** a namelist key names a slot in a derived type — `%` descends into a component and `(i)` selects an
+array element. To flatten that path into a single flat env-var name, every structural separator becomes `_`:
+
+| in the namelist | rule | in the environment |
+|---|---|---|
+| `%` (component of a derived type) | → `_` | `a%b` → `a_b` |
+| `(i)` (array subscript) | parens drop, index kept | `a(1)` → `a_1` |
+| `(i,j)` (multi-dim subscript) | comma → `_` | `a(1,2)` → `a_1_2` |
+| combination | applied left to right, no doubled `_` | `NML%N(1)%TGTS` → `NML_N_1_TGTS` |
+
+So a namelist like
+
+```fortran
+&config
+  NML%DIR%WTHR_OBS = "/srv/data/jma=amedas"
+  NML%N(1)%TGTS    = 24
+  NML%SHRINK%FLAG  = T
+/
 ```
-NML%DIR%WTHR_OBS -> NML_DIR_WTHR_OBS
-NML%N(1)%TGTS    -> NML_N_1_TGTS
-AREAS(1,2)       -> AREAS_1_2
-```
+
+becomes the environment variables `NML_DIR_WTHR_OBS=/srv/data/jma=amedas`, `NML_N_1_TGTS=24`,
+`NML_SHRINK_FLAG=T`.
 
 ```fortran
 n = env%load_namelist ( 'config.nml' )                 ! returns the count set

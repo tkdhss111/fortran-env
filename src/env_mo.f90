@@ -3,7 +3,11 @@
 ! (/srv/data/tkd-config/data-paths.env, injected by a quadlet EnvironmentFile or
 ! `source`) with a compiled fallback, via ONE polymorphic getter — no get_<type>.
 ! It can also INGEST a Fortran namelist file, setting each `KEY = VALUE` as an env
-! var with the key mangled to a valid name (`%` and array subscripts -> `_`):
+! var. Env names can't hold `%` or `()`, so the key is mangled to a flat name —
+! every structural separator becomes `_`:
+!     a%b     ->  a_b        ( `%` derived-type component  -> `_` )
+!     a(1)    ->  a_1        ( `(i)` array subscript        -> `_i` )
+!     a(1,2)  ->  a_1_2      ( `(i,j)` multi-dim subscript  -> `_i_j` )
 !     NML%DIR%WTHR_OBS  ->  NML_DIR_WTHR_OBS
 !     NML%N(1)%TGTS     ->  NML_N_1_TGTS
 !
