@@ -9,8 +9,24 @@
 !_TAG_PROGRAM_NAME	Universal Ctags	/Derived from Exuberant Ctags/
 !_TAG_PROGRAM_URL	https://ctags.io/	/official site/
 !_TAG_PROGRAM_VERSION	5.9.0	//
+CMAKE	/home/hss/Desktop/2_tools/fortran-env/makefile	/^CMAKE       := cmake .. -GNinja -DCMAKE_BUILD_TYPE=Debug$/;"	m	line:1	language:Make
 CMAKE_Fortran_COMPILER	/home/hss/Desktop/2_tools/fortran-env/CMakeLists.txt	/^set ( CMAKE_Fortran_COMPILER gfortran )$/;"	v	line:2	language:CMake
+CMAKE_Fortran_FLAGS	/home/hss/Desktop/2_tools/fortran-env/test/CMakeLists.txt	/^set ( CMAKE_Fortran_FLAGS$/;"	v	line:4	language:CMake
+CMAKE_Fortran_FLAGS_DEBUG	/home/hss/Desktop/2_tools/fortran-env/test/CMakeLists.txt	/^set ( CMAKE_Fortran_FLAGS_DEBUG$/;"	v	line:6	language:CMake
+EXE	/home/hss/Desktop/2_tools/fortran-env/test/CMakeLists.txt	/^set ( EXE unit_test )$/;"	v	line:1	language:CMake
 MAXLEN	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  integer, parameter :: MAXLEN /;"	v	line:21	language:Fortran	module:env_mo
+MKDIR_BUILD	/home/hss/Desktop/2_tools/fortran-env/makefile	/^MKDIR_BUILD := mkdir -p build && cd build$/;"	m	line:2	language:Make
+MKFILE	/home/hss/Desktop/2_tools/fortran-env/src/makefile	/^MKFILE:=-C .. -f makefile$/;"	m	line:1	language:Make
+MKFILE	/home/hss/Desktop/2_tools/fortran-env/test/makefile	/^MKFILE:=-C .. -f makefile$/;"	m	line:1	language:Make
+SRCS	/home/hss/Desktop/2_tools/fortran-env/test/CMakeLists.txt	/^set ( SRCS .\/unit_test.f90 ..\/src\/env_mo.f90 )$/;"	v	line:2	language:CMake
+check_c	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  subroutine check_c /;"	s	line:48	language:Fortran	program:unit_test	signature:(got, want, label)
+check_i	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  subroutine check_i /;"	s	line:58	language:Fortran	program:unit_test	signature:(got, want, label)
+check_l	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  subroutine check_l /;"	s	line:80	language:Fortran	program:unit_test	signature:(got, want, label)
+check_r	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  subroutine check_r /;"	s	line:69	language:Fortran	program:unit_test	signature:(got, want, label)
+clean	/home/hss/Desktop/2_tools/fortran-env/makefile	/^clean:$/;"	t	line:8	language:Make
+clean	/home/hss/Desktop/2_tools/fortran-env/src/makefile	/^clean:$/;"	t	line:6	language:Make
+clean	/home/hss/Desktop/2_tools/fortran-env/test/makefile	/^clean:$/;"	t	line:6	language:Make
+env	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  type(env_/;"	v	line:7	language:Fortran	program:unit_test
 env_get_character	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_character /;"	f	line:57	language:Fortran	module:env_mo
 env_get_integer	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_integer /;"	f	line:74	language:Fortran	module:env_mo
 env_get_logical	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_logical /;"	f	line:103	language:Fortran	module:env_mo
@@ -26,5 +42,11 @@ get_integer	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure
 get_logical	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_logical /;"	M	line:29	language:Fortran	type:env_ty
 get_real	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_real /;"	M	line:28	language:Fortran	type:env_ty
 is_set	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: is_set /;"	M	line:30	language:Fortran	type:env_ty
+nfail	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  integer        :: nfail /;"	v	line:9	language:Fortran	program:unit_test
 override	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: override /;"	M	line:25	language:Fortran	type:env_ty
+path	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^  character(255) :: path$/;"	v	line:8	language:Fortran	program:unit_test
 require	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: require /;"	M	line:31	language:Fortran	type:env_ty
+test	/home/hss/Desktop/2_tools/fortran-env/makefile	/^test:$/;"	t	line:5	language:Make
+test	/home/hss/Desktop/2_tools/fortran-env/src/makefile	/^test:$/;"	t	line:3	language:Make
+test	/home/hss/Desktop/2_tools/fortran-env/test/makefile	/^test:$/;"	t	line:3	language:Make
+unit_test	/home/hss/Desktop/2_tools/fortran-env/test/unit_test.f90	/^program unit_test$/;"	p	line:1	language:Fortran

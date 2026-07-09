@@ -5,28 +5,43 @@ program unit_test
   implicit none
 
   type(env_ty)   :: env
-  character(255) :: path
+  character(255) :: path, cstr
+  integer        :: ival, n, u
+  real           :: rval
+  logical        :: lval
   integer        :: nfail = 0
 
   print *, '===== fortran-env unit test ====='
 
-  ! --- 1. UNSET variable -> compiled default / no-op (needs no environment) ---
-  call check_c ( env%get_character ( 'ENV_MO_UNSET', 'fallback' ), 'fallback', 'get_character default' )
-  call check_i ( env%get_integer   ( 'ENV_MO_UNSET', 7 ),          7,          'get_integer default'   )
-  call check_r ( env%get_real      ( 'ENV_MO_UNSET', 2.5 ),        2.5,        'get_real default'      )
-  call check_l ( env%get_logical   ( 'ENV_MO_UNSET', .true. ),     .true.,     'get_logical default'   )
-  call check_l ( env%is_set        ( 'ENV_MO_UNSET' ),             .false.,    'is_set = F when unset' )
+  ! --- 1. UNSET -> one polymorphic get() keeps the pre-set default (any type) ---
+  cstr = 'fallback' ; call env%get ( 'ENV_MO_UNSET', cstr )
+  call check_c ( trim(cstr), 'fallback', 'get character keeps default when unset' )
+  ival = 7          ; call env%get ( 'ENV_MO_UNSET', ival )
+  call check_i ( ival, 7, 'get integer keeps default when unset' )
+  rval = 2.5        ; call env%get ( 'ENV_MO_UNSET', rval )
+  call check_r ( rval, 2.5, 'get real keeps default when unset' )
+  lval = .true.     ; call env%get ( 'ENV_MO_UNSET', lval )
+  call check_l ( lval, .true., 'get logical keeps default when unset' )
+  call check_l ( env%is_set ( 'ENV_MO_UNSET' ), .false., 'is_set = F when unset' )
+
+  ! explicit-default form
+  call env%get ( 'ENV_MO_UNSET', ival, 99 )
+  call check_i ( ival, 99, 'get integer uses explicit default when unset' )
 
   path = '/srv/data/compiled-default'
   call env%override ( path, 'ENV_MO_UNSET' )
   call check_c ( trim(path), '/srv/data/compiled-default', 'override no-op when unset' )
 
   ! --- 2. SET variables (provided by ctest ENVIRONMENT in test/CMakeLists.txt) ---
-  call check_c ( env%get_character ( 'ENV_MO_STR' ),           'hello', 'get_character set'   )
-  call check_i ( env%get_integer   ( 'ENV_MO_INT',  0 ),       42,      'get_integer set'     )
-  call check_r ( env%get_real      ( 'ENV_MO_REAL', 0.0 ),     3.14,    'get_real set'        )
-  call check_l ( env%get_logical   ( 'ENV_MO_BOOL', .false. ), .true.,  'get_logical set (T)' )
-  call check_l ( env%is_set        ( 'ENV_MO_STR' ),           .true.,  'is_set = T when set' )
+  cstr = ''      ; call env%get ( 'ENV_MO_STR',  cstr )
+  call check_c ( trim(cstr), 'hello', 'get character when set' )
+  ival = 0       ; call env%get ( 'ENV_MO_INT',  ival )
+  call check_i ( ival, 42, 'get integer when set' )
+  rval = 0.0     ; call env%get ( 'ENV_MO_REAL', rval )
+  call check_r ( rval, 3.14, 'get real when set' )
+  lval = .false. ; call env%get ( 'ENV_MO_BOOL', lval )
+  call check_l ( lval, .true., 'get logical when set (T)' )
+  call check_l ( env%is_set ( 'ENV_MO_STR' ), .true., 'is_set = T when set' )
 
   path = '/srv/data/compiled-default'
   call env%override ( path, 'ENV_MO_PATH' )
@@ -34,6 +49,33 @@ program unit_test
 
   ! --- 3. require: returns a present var (a missing one would error stop) ---
   call check_c ( env%require ( 'ENV_MO_STR' ), 'hello', 'require returns when set' )
+
+  ! --- 4. mangle_key: '%' and array subscripts -> '_' ---
+  call check_c ( env%mangle_key ( 'NML%DIR%WTHR_OBS' ), 'NML_DIR_WTHR_OBS', 'mangle %' )
+  call check_c ( env%mangle_key ( 'NML%N(1)%TGTS' ),    'NML_N_1_TGTS',     'mangle %(n)%' )
+  call check_c ( env%mangle_key ( 'AREAS(1,2)' ),       'AREAS_1_2',        'mangle (i,j)' )
+
+  ! --- 5. set: env write -> get roundtrip ---
+  call env%set ( 'ENV_MO_ROUNDTRIP', '/some/path' )
+  cstr = '' ; call env%get ( 'ENV_MO_ROUNDTRIP', cstr )
+  call check_c ( trim(cstr), '/some/path', 'set + get roundtrip' )
+
+  ! --- 6. load_namelist: file -> env vars, keys mangled, values de-quoted ---
+  open ( newunit = u, file = 'env_mo_test.nml', status = 'replace', action = 'write' )
+  write ( u, '(a)' ) '&config'
+  write ( u, '(a)' ) '  NML%DIR%WTHR_OBS = "/srv/data/jma=amedas",   ! obs store'
+  write ( u, '(a)' ) '  NML%N(1)%TGTS    = 24'
+  write ( u, '(a)' ) '  NML%SHRINK%FLAG  = T'
+  write ( u, '(a)' ) '/'
+  close ( u )
+  n = env%load_namelist ( 'env_mo_test.nml' )
+  call check_i ( n, 3, 'load_namelist sets 3 vars' )
+  cstr = '' ; call env%get ( 'NML_DIR_WTHR_OBS', cstr )
+  call check_c ( trim(cstr), '/srv/data/jma=amedas', 'namelist % path (comment/comma stripped)' )
+  ival = 0  ; call env%get ( 'NML_N_1_TGTS', ival )
+  call check_i ( ival, 24, 'namelist array-index integer' )
+  lval = .false. ; call env%get ( 'NML_SHRINK_FLAG', lval )
+  call check_l ( lval, .true., 'namelist logical' )
 
   print *, '================================='
   if ( nfail == 0 ) then
