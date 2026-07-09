@@ -1,0 +1,30 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_OUTPUT_EXCMD	mixed	/number, pattern, mixed, or combineV2/
+!_TAG_OUTPUT_FILESEP	slash	/slash or backslash/
+!_TAG_OUTPUT_MODE	u-ctags	/u-ctags or e-ctags/
+!_TAG_PATTERN_LENGTH_LIMIT	96	/0 for no limit/
+!_TAG_PROC_CWD	/home/hss/0_tkd/1_hss/2_tools/fortran-env/	//
+!_TAG_PROGRAM_AUTHOR	Universal Ctags Team	//
+!_TAG_PROGRAM_NAME	Universal Ctags	/Derived from Exuberant Ctags/
+!_TAG_PROGRAM_URL	https://ctags.io/	/official site/
+!_TAG_PROGRAM_VERSION	5.9.0	//
+CMAKE_Fortran_COMPILER	/home/hss/Desktop/2_tools/fortran-env/CMakeLists.txt	/^set ( CMAKE_Fortran_COMPILER gfortran )$/;"	v	line:2	language:CMake
+MAXLEN	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  integer, parameter :: MAXLEN /;"	v	line:21	language:Fortran	module:env_mo
+env_get_character	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_character /;"	f	line:57	language:Fortran	module:env_mo
+env_get_integer	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_integer /;"	f	line:74	language:Fortran	module:env_mo
+env_get_logical	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_logical /;"	f	line:103	language:Fortran	module:env_mo
+env_get_real	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_get_real /;"	f	line:88	language:Fortran	module:env_mo
+env_is_set	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  logical function env_is_set /;"	f	line:37	language:Fortran	module:env_mo
+env_mo	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^module env_mo$/;"	m	line:14	language:Fortran
+env_override	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  subroutine env_override /;"	s	line:47	language:Fortran	module:env_mo	signature:(path, name)
+env_require	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  function env_require /;"	f	line:119	language:Fortran	module:env_mo
+env_ty	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^  type env_ty$/;"	t	line:23	language:Fortran	module:env_mo
+fortran-env	/home/hss/Desktop/2_tools/fortran-env/CMakeLists.txt	/^project ( fortran-env LANGUAGES Fortran VERSION 1.0.0 )$/;"	p	line:5	language:CMake
+get_character	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_character /;"	M	line:26	language:Fortran	type:env_ty
+get_integer	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_integer /;"	M	line:27	language:Fortran	type:env_ty
+get_logical	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_logical /;"	M	line:29	language:Fortran	type:env_ty
+get_real	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: get_real /;"	M	line:28	language:Fortran	type:env_ty
+is_set	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: is_set /;"	M	line:30	language:Fortran	type:env_ty
+override	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: override /;"	M	line:25	language:Fortran	type:env_ty
+require	/home/hss/Desktop/2_tools/fortran-env/src/env_mo.f90	/^    procedure, nopass :: require /;"	M	line:31	language:Fortran	type:env_ty
