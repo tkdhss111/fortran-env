@@ -80,9 +80,20 @@ round-trips, while secrets you only *read* (via `require`/`get`) are never dumpe
 the raw process environment, which keeps it portable and leak-safe.
 
 ```fortran
-n = env%load ( '/srv/data/tkd-config/data-paths.env' )   ! .env  -> env vars
+n = env%load ( '/srv/data/tkd-config/data-paths.env' )   ! .env  -> env vars ($VAR expanded)
 n = env%save ( 'out.env', 'DIR_TKD_' )                   ! tracked DIR_TKD_* -> .env (podman --env-file)
+n = env%save_sh ( 'setenv.sh', 'DIR_TKD_' )              ! ... or a runnable `export` script — `source` it
+call env%unset ( 'TMP_VAR' )                             ! unsetenv + untrack
 ```
+
+**Variable expansion.** `load` / `load_namelist` expand `$VAR` and `${VAR}` in values against the vars set
+so far (line by line, like `source`), an unset reference becoming empty. So the registry's
+`DIR_TKD_AMEDAS=$DIR_DATA/tkd-wx-jma-amedas` resolves in-process — `env_mo` can replace the
+`gen-resolved-paths.sh` generator. Use `expand` directly for one string.
+
+**Two writers.** `save` emits plain `KEY=VALUE` (podman `--env-file`, quadlet `EnvironmentFile`);
+`save_sh` emits a runnable `#!/bin/sh` script of `export NAME='value'` lines (sh-safe quoting, marked
+executable) that you `source` to set the vars in your shell.
 
 Names are validated on the way in — `load`/`load_namelist` skip any key that isn't a POSIX identifier.
 Check inputs yourself with `is_name` / `bad_char`:
@@ -104,10 +115,13 @@ if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own a
 | `bad_char(str[, allowed])` | position of the first char not in `allowed` (default: the env-name charset); `0` = all permitted |
 | `require(name)` | returns `$name` string, or prints + `error stop` if unset |
 | `set(name, value)` | set/overwrite `$name` via `setenv` and track it for `save` (ignored if `name` invalid) |
+| `unset(name)` | `unsetenv` and drop it from tracking |
+| `expand(str)` | expand `$VAR` / `${VAR}` against the environment (unset → `''`); returns the string |
 | `mangle_key(key)` | namelist key → env name (`%` and subscripts → `_`) |
-| `load_namelist(file[, prefix])` | namelist file → env vars, each key `mangle_key`-ed; returns count |
-| `load(file)` | plain `.env` file → env vars (keys used verbatim); returns count |
-| `save(file[, prefix])` | write tracked (set/loaded) vars to a `.env` file, optionally prefix-filtered; returns count |
+| `load_namelist(file[, prefix])` | namelist file → env vars, each key `mangle_key`-ed, values `$VAR`-expanded; returns count |
+| `load(file)` | plain `.env` file → env vars (keys verbatim, values `$VAR`-expanded); returns count |
+| `save(file[, prefix])` | write tracked vars to a `.env` file (`KEY=VALUE`), optionally prefix-filtered; returns count |
+| `save_sh(file[, prefix])` | write tracked vars to a runnable `export` shell script (`+x`); returns count |
 
 ## Test
 

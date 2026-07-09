@@ -28,8 +28,10 @@
 !   call env%get ( 'HALFLIFE_DAYS', x, 90.0 )            ! explicit default also accepted
 !   call env%override ( dir, 'DIR_TKD_WX_JMA_AMEDAS' )   ! registry no-op override (get alias)
 !   n   = env%load_namelist ( 'config.nml' )             ! namelist file -> env vars
-!   n   = env%load ( 'data-paths.env' )                  ! .env file -> env vars (KEY=VALUE)
+!   n   = env%load ( 'data-paths.env' )                  ! .env file -> env vars ($VAR expanded)
 !   n   = env%save ( 'out.env', 'DIR_TKD_' )             ! set/loaded vars -> .env (prefix-filtered)
+!   n   = env%save_sh ( 'setenv.sh', 'DIR_TKD_' )        ! runnable `export` script (source it)
+!   call env%unset ( 'TMP_VAR' )                         ! unsetenv + untrack
 !   if ( .not. env%is_name ( key ) ) ...                 ! validate an env-var name
 !   key = env%require ( 'OPENMETEO_APIKEY' )             ! required string, else error stop
 
@@ -56,13 +58,18 @@ module env_mo
   character(MAXNAME), allocatable, save :: g_names(:)
   integer,                         save :: g_count = 0
 
-  ! libc setenv — the only portable way to *set* an env var from Fortran.
+  ! libc setenv/unsetenv — the only portable way to write the environment from Fortran.
   interface
     function c_setenv ( name, value, overwrite ) bind(C, name = 'setenv') result ( r )
       import :: c_char, c_int
       character(kind=c_char), intent(in) :: name(*), value(*)
       integer(c_int), value :: overwrite
       integer(c_int)        :: r
+    end function
+    function c_unsetenv ( name ) bind(C, name = 'unsetenv') result ( r )
+      import :: c_char, c_int
+      character(kind=c_char), intent(in) :: name(*)
+      integer(c_int)                     :: r
     end function
   end interface
 
@@ -75,10 +82,13 @@ module env_mo
     procedure, nopass :: bad_char      => env_bad_char       ! first unpermitted char position (0=ok)
     procedure, nopass :: require       => env_require        ! required string, else error stop
     procedure, nopass :: set           => env_set            ! setenv one variable (tracked)
+    procedure, nopass :: unset         => env_unset          ! unsetenv + untrack
+    procedure, nopass :: expand        => env_expand         ! $VAR / ${VAR} -> value ('' if unset)
     procedure, nopass :: mangle_key    => env_mangle_key     ! namelist key -> env name
     procedure, nopass :: load_namelist => env_load_namelist  ! namelist file -> env vars
     procedure, nopass :: load          => env_load           ! .env file  -> env vars
     procedure, nopass :: save          => env_save           ! set/loaded vars -> .env file
+    procedure, nopass :: save_sh       => env_save_sh        ! set/loaded vars -> runnable export script
   end type
 
 contains
@@ -241,6 +251,56 @@ contains
     call env_track ( trim(name) )
   end subroutine
 
+  ! Remove $name from the environment and stop tracking it (the set/save pair).
+  subroutine env_unset ( name )
+    character(*), intent(in) :: name
+    integer(c_int) :: r
+    integer :: i, j
+    r = c_unsetenv ( trim(name)//c_null_char )
+    j = 0
+    do i = 1, g_count                                ! compact the tracked list
+      if ( trim(g_names(i)) == trim(name) ) cycle
+      j = j + 1
+      g_names(j) = g_names(i)
+    end do
+    g_count = j
+  end subroutine
+
+  ! Expand $VAR and ${VAR} references against the current environment; an unset
+  ! variable expands to '' (like `source`). A '$' that doesn't start a valid
+  ! reference is kept literally. Applied to values by load / load_namelist.
+  function env_expand ( str ) result ( out )
+    character(*), intent(in)  :: str
+    character(:), allocatable :: out
+    integer :: i, n, j
+    n = len ( str )
+    out = ''
+    i = 1
+    do while ( i <= n )
+      if ( str(i:i) == '$' .and. i < n ) then
+        if ( str(i+1:i+1) == '{' ) then                          ! ${VAR}
+          j = index ( str(i+2:), '}' )
+          if ( j > 0 ) then
+            out = out // env_raw ( str(i+2:i+j) )
+            i = i + j + 2
+            cycle
+          end if
+        else if ( verify ( str(i+1:i+1), NAME_HEAD ) == 0 ) then ! $VAR
+          j = i + 1
+          do while ( j <= n )
+            if ( verify ( str(j:j), NAME_BODY ) /= 0 ) exit
+            j = j + 1
+          end do
+          out = out // env_raw ( str(i+1:j-1) )
+          i = j
+          cycle
+        end if
+      end if
+      out = out // str(i:i)
+      i = i + 1
+    end do
+  end function
+
   ! Fortran namelist key -> env-var name: '%' and array subscripts collapse to '_'.
   !   NML%DIR%WTHR_OBS -> NML_DIR_WTHR_OBS ; NML%N(1)%TGTS -> NML_N_1_TGTS ; A(1,2) -> A_1_2
   function env_mangle_key ( key ) result ( name )
@@ -300,6 +360,7 @@ contains
         if ( j > 0 ) val = val(1:j-1)
         val = trim ( adjustl ( val ) )
       end if
+      val  = env_expand ( val )                        ! $VAR / ${VAR} against vars set so far
       name = env_mangle_key ( key )
       if ( present(prefix) ) name = prefix//name
       if ( .not. env_is_name ( name ) ) cycle          ! skip keys that don't mangle to a valid name
@@ -338,6 +399,7 @@ contains
         if ( ( q == '"' .or. q == "'" ) .and. val(len(val):len(val)) == q ) &
           val = val(2:len(val)-1)
       end if
+      val = env_expand ( val )                          ! $VAR / ${VAR} against vars set so far
       if ( .not. env_is_name ( key ) ) cycle           ! skip malformed keys
       call env_set ( key, val )
       nset = nset + 1
@@ -374,6 +436,56 @@ contains
       end if
     end do
     close ( u )
+  end function
+
+  ! sh-safe single-quoted literal: wrap in '...', turning each embedded ' into '\''.
+  function env_sh_quote ( s ) result ( q )
+    character(*), intent(in)  :: s
+    character(:), allocatable :: q
+    integer :: i
+    q = "'"
+    do i = 1, len ( s )
+      if ( s(i:i) == "'" ) then
+        q = q // "'\''"
+      else
+        q = q // s(i:i)
+      end if
+    end do
+    q = q // "'"
+  end function
+
+  ! Like save, but write a RUNNABLE shell script of `export NAME='value'` lines
+  ! (with a #!/bin/sh shebang and sh-safe quoting) and mark it executable.
+  ! `source` it to set the variables in your current shell, or run it to seed a
+  ! child process. Returns the number of variables written.
+  function env_save_sh ( file, prefix ) result ( nwritten )
+    character(*), intent(in)           :: file
+    character(*), intent(in), optional :: prefix
+    integer :: nwritten, u, i, ios, cst
+    character(:), allocatable :: pfx, nm, val
+    logical :: keep
+    nwritten = 0
+    pfx = ''
+    if ( present(prefix) ) pfx = prefix
+    open ( newunit = u, file = file, status = 'replace', action = 'write', iostat = ios )
+    if ( ios /= 0 ) return
+    write ( u, '(a)' ) '#!/bin/sh'
+    write ( u, '(a)' ) '# generated by env_mo'
+    do i = 1, g_count
+      nm   = trim ( g_names(i) )
+      keep = .true.
+      if ( len(pfx) > 0 ) then
+        keep = .false.
+        if ( len(nm) >= len(pfx) ) keep = ( nm(1:len(pfx)) == pfx )
+      end if
+      if ( keep ) then
+        val = env_raw ( nm )
+        write ( u, '(a)' ) 'export '//nm//'='//env_sh_quote ( val )
+        nwritten = nwritten + 1
+      end if
+    end do
+    close ( u )
+    call execute_command_line ( "chmod +x '"//trim(file)//"'", wait = .true., cmdstat = cst )
   end function
 
 end module

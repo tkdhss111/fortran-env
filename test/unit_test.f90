@@ -148,6 +148,51 @@ program unit_test
   call check_i ( env%bad_char ( 'abc', 'abcdef' ),    0, 'bad_char: custom allowed set, clean' )
   call check_i ( env%bad_char ( 'abz', 'abcdef' ),    3, 'bad_char: custom allowed set, z at 3' )
 
+  ! --- 12. expand: $VAR / ${VAR} against the environment, unset -> '' ---
+  call env%set ( 'EXP_BASE', '/srv/data' )
+  call check_c ( env%expand ( '$EXP_BASE/sub' ),   '/srv/data/sub', 'expand $VAR' )
+  call check_c ( env%expand ( '${EXP_BASE}/sub' ), '/srv/data/sub', 'expand ${VAR}' )
+  call check_c ( env%expand ( '$NOPE_XYZ/tail' ),  '/tail',         'expand undefined $VAR -> empty' )
+  call check_c ( env%expand ( 'cost is $5' ),      'cost is $5',    'literal $ (not a ref) kept' )
+
+  ! --- 13. load with expansion: later lines resolve earlier ones (source order) ---
+  open ( newunit = u, file = 'env_mo_exp.env', status = 'replace', action = 'write' )
+  write ( u, '(a)' ) 'EXP_ROOT=/srv/data'
+  write ( u, '(a)' ) 'EXP_LEAF=$EXP_ROOT/tkd-wx'
+  write ( u, '(a)' ) 'EXP_MISS=${NOPE_ABC}/x'
+  close ( u )
+  n = env%load ( 'env_mo_exp.env' )
+  call check_i ( n, 3, 'load with expansion: 3 vars' )
+  cstr = '' ; call env%get ( 'EXP_LEAF', cstr )
+  call check_c ( trim(cstr), '/srv/data/tkd-wx', 'load expands $VAR to a prior var' )
+  cstr = '' ; call env%get ( 'EXP_MISS', cstr )
+  call check_c ( trim(cstr), '/x', 'load expands undefined ${VAR} to empty' )
+
+  ! --- 14. unset: unsetenv + untrack ---
+  call env%set ( 'UNSET_ME', 'x' )
+  call check_l ( env%is_set ( 'UNSET_ME' ), .true.,  'set before unset' )
+  call env%unset ( 'UNSET_ME' )
+  call check_l ( env%is_set ( 'UNSET_ME' ), .false., 'unset removes the var' )
+  n = env%save ( 'env_mo_unset.env', 'UNSET_' )
+  call check_i ( n, 0, 'unset also untracks (save skips it)' )
+
+  ! --- 15. save_sh: runnable `export` script, sh-safe quoting ---
+  call env%set ( 'SH_A', 'plain' )
+  call env%set ( 'SH_B', "it's quoted" )              ! embedded single quote
+  n = env%save_sh ( 'env_mo_set.sh', 'SH_' )
+  call check_i ( n, 2, 'save_sh writes 2 SH_ vars' )
+  found = .false. ; secret_leaked = .false.           ! reuse: secret_leaked = "found SH_B escaped line"
+  open ( newunit = u, file = 'env_mo_set.sh', status = 'old', action = 'read' )
+  do
+    read ( u, '(a)', iostat = ios ) line
+    if ( ios /= 0 ) exit
+    if ( trim(line) == "export SH_A='plain'" )          found = .true.
+    if ( trim(line) == "export SH_B='it'\''s quoted'" ) secret_leaked = .true.
+  end do
+  close ( u )
+  call check_l ( found,         .true., 'save_sh wrote a plain export line' )
+  call check_l ( secret_leaked, .true., 'save_sh escaped an embedded single quote' )
+
   print *, '================================='
   if ( nfail == 0 ) then
     print *, 'ALL TESTS PASSED'
