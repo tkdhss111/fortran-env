@@ -60,6 +60,22 @@ program unit_test
   ! --- 3. require: returns a present var (a missing one would error stop) ---
   call check_c ( env%require ( 'ENV_MO_STR' ), 'hello', 'require returns when set' )
 
+  ! --- 3b. val: function-form getter (x = env%val(name)), keeps default if unset ---
+  rval = 2.5     ; rval = env%val ( 'ENV_MO_UNSET' )
+  call check_r ( rval, 2.5, 'val real keeps default when unset' )
+  rval = 0.0     ; rval = env%val ( 'ENV_MO_REAL' )
+  call check_r ( rval, 3.14, 'val real when set' )
+  ival = 1       ; ival = env%val ( 'ENV_MO_INT' )
+  call check_i ( ival, 42, 'val integer when set' )
+  dval = 0.0d0   ; dval = env%val ( 'ENV_MO_REAL' )
+  call check_r ( real(dval), 3.14, 'val double when set' )
+  lval = .false. ; lval = env%val ( 'ENV_MO_BOOL' )
+  call check_l ( lval, .true., 'val logical when set' )
+  cstr = 'keep'  ; cstr = env%val ( 'ENV_MO_UNSET' )
+  call check_c ( trim(cstr), 'keep', 'val character keeps default when unset' )
+  cstr = ''      ; cstr = env%val ( 'ENV_MO_STR' )
+  call check_c ( trim(cstr), 'hello', 'val character when set' )
+
   ! --- 4. mangle_key: '%' and array subscripts -> '_' ---
   call check_c ( env%mangle_key ( 'NML%DIR%WTHR_OBS' ), 'NML_DIR_WTHR_OBS', 'mangle a%b%c' )
   call check_c ( env%mangle_key ( 'NML%N(1)%TGTS' ),    'NML_N_1_TGTS',     'mangle %(n)%' )

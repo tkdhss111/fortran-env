@@ -26,6 +26,9 @@ call env%get ( 'NUM_THREADS', n )                   ! n stays 1 if unset/unparse
 call env%get ( 'HALFLIFE_DAYS', x, 90.0 )           ! or pass the default explicitly
 call env%get ( 'VERBOSE', ok )
 
+! Prefer a one-liner? `val` is the function twin of `get` — assign it to any scalar.
+x = env%val ( 'HALFLIFE_DAYS' )                     ! x keeps its prior value (90.0) if unset
+
 ! Override (get with args swapped): overwrite in place only when the var is set.
 call env%override ( dir, 'DATA_DIR' )
 
@@ -108,7 +111,8 @@ if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own a
 
 | method | behaviour |
 |---|---|
-| `get(name, val[, default])` | fetch `$name` into `val` (character/integer/real/double/logical); keep `default` or `val`'s incoming value if unset/unparseable |
+| `get(name, val[, default])` | subroutine getter — fetch `$name` into `val` (character/integer/real/double/logical); keep `default` or `val`'s incoming value if unset/unparseable |
+| `val(name)` | function twin: `x = env%val(name)` for any scalar; keeps `x`'s prior value if unset/unparseable |
 | `override(val, name)` | overwrite `val` in place if `$name` set & non-empty; else keep the compiled default (get alias) |
 | `is_set(name)` | true if present & non-empty |
 | `is_name(name)` | true if `name` is a valid POSIX env-var identifier |
@@ -126,16 +130,16 @@ if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own a
 
 ## Test
 
-`make test` builds the suite and runs it under `ctest`. 62 assertions cover every method — the polymorphic
-getter across all scalar types, namelist mangling, `.env` load/save round-trips, `$VAR` expansion, name
-validation, and the shell-script writers. All pass on **gfortran** and **ifx**.
+`make test` builds the suite and runs it under `ctest`. 69 assertions cover every method — the polymorphic
+getter (subroutine and `val` function forms) across all scalar types, namelist mangling, `.env` load/save
+round-trips, `$VAR` expansion, name validation, and the shell-script writers. All pass on **gfortran** and **ifx**.
 
 ```
 make test
 ```
 
 <details>
-<summary><b>Test output</b> — 62/62 assertions pass</summary>
+<summary><b>Test output</b> — 69/69 assertions pass</summary>
 
 ```
 ===== fortran-env unit test =====
@@ -156,6 +160,13 @@ PASS  is_set = T when set
 PASS  override applies when set
 PASS  get integer keeps default on parse error
 PASS  require returns when set
+PASS  val real keeps default when unset
+PASS  val real when set
+PASS  val integer when set
+PASS  val double when set
+PASS  val logical when set
+PASS  val character keeps default when unset
+PASS  val character when set
 PASS  mangle a%b%c
 PASS  mangle %(n)%
 PASS  mangle (i,j)

@@ -25,6 +25,7 @@
 !   character(255) :: dir = '/var/data/default'
 !   call env%get ( 'NUM_THREADS', n )                    ! any scalar type; n kept if unset
 !   call env%get ( 'HALFLIFE_DAYS', x, 90.0 )            ! explicit default also accepted
+!   x = env%val ( 'HALFLIFE_DAYS' )                      ! function form; x kept if unset
 !   call env%override ( dir, 'DATA_DIR' )                ! overwrite in place only when set
 !   n   = env%load_namelist ( 'config.nml' )             ! namelist file -> env vars
 !   n   = env%load ( 'config.env' )                      ! .env file -> env vars ($VAR expanded)
@@ -42,11 +43,26 @@ module env_mo
   implicit none
 
   private
-  public :: env_ty
+  public :: env_ty, assignment(=)
 
   integer, parameter :: MAXLEN  = 4096         ! generous: long store paths, API keys
   integer, parameter :: MAXNAME = 255          ! tracked env-var name length
-  integer, parameter :: dp      = kind(1.0d0)  ! double-precision get() targets
+  integer, parameter :: dp      = kind(1.0d0)  ! double-precision get()/val() targets
+
+  ! Result of val() — an opaque raw-string carrier. Defined assignment converts it
+  ! into any scalar, so `x = env%val('NAME')` works as a function-form getter
+  ! (Fortran forbids one name being both a function and a subroutine, so this is a
+  ! sibling of the `call env%get(name, val)` subroutine, not `get` itself).
+  type :: env_res
+    private
+    character(:), allocatable :: s
+    logical                   :: found = .false.
+  end type
+
+  interface assignment(=)
+    module procedure env_assign_character, env_assign_integer, &
+                     env_assign_real, env_assign_double, env_assign_logical
+  end interface
 
   ! Permitted characters in a POSIX environment-variable name.
   character(*), parameter :: NAME_HEAD = &
@@ -75,7 +91,8 @@ module env_mo
 
   type env_ty
   contains
-    procedure, nopass :: get           => env_get            ! polymorphic getter (any scalar type)
+    procedure, nopass :: get           => env_get            ! subroutine getter: call env%get(name, val)
+    procedure, nopass :: val           => env_val            ! function getter:   x = env%val(name)
     procedure, nopass :: override      => env_override       ! in-place override, only if set (get alias)
     procedure, nopass :: is_set        => env_is_set
     procedure, nopass :: is_name       => env_is_name        ! valid env-var name?
@@ -200,6 +217,59 @@ contains
       else if ( present(default) ) then
         select type ( d => default ) ; type is ( logical ) ; v = d ; end select
       end if
+    end select
+  end subroutine
+
+  ! Function-form getter: x = env%val('NAME'). Returns an opaque carrier that
+  ! defined assignment converts into character / integer / real / double / logical.
+  ! Pre-set the target to your default — it is kept when the var is unset or the
+  ! value doesn't parse (the twin of `call env%get(name, val)`).
+  function env_val ( name ) result ( r )
+    character(*), intent(in) :: name
+    type(env_res) :: r
+    r%s     = env_raw ( name )
+    r%found = ( len_trim(r%s) > 0 )
+  end function
+
+  ! Defined assignment: intrinsic-scalar = env_res. Each keeps its LHS (the
+  ! default) when the variable was unset or the value fails to parse.
+  subroutine env_assign_character ( x, r )
+    character(*),  intent(inout) :: x
+    type(env_res), intent(in)    :: r
+    if ( r%found ) x = r%s
+  end subroutine
+
+  subroutine env_assign_integer ( x, r )
+    integer,       intent(inout) :: x
+    type(env_res), intent(in)    :: r
+    integer :: ios, t
+    if ( .not. r%found ) return
+    read ( r%s, *, iostat = ios ) t ; if ( ios == 0 ) x = t
+  end subroutine
+
+  subroutine env_assign_real ( x, r )
+    real,          intent(inout) :: x
+    type(env_res), intent(in)    :: r
+    integer :: ios ; real :: t
+    if ( .not. r%found ) return
+    read ( r%s, *, iostat = ios ) t ; if ( ios == 0 ) x = t
+  end subroutine
+
+  subroutine env_assign_double ( x, r )
+    real(dp),      intent(inout) :: x
+    type(env_res), intent(in)    :: r
+    integer :: ios ; real(dp) :: t
+    if ( .not. r%found ) return
+    read ( r%s, *, iostat = ios ) t ; if ( ios == 0 ) x = t
+  end subroutine
+
+  subroutine env_assign_logical ( x, r )
+    logical,       intent(inout) :: x
+    type(env_res), intent(in)    :: r
+    if ( .not. r%found ) return
+    select case ( r%s(1:1) )
+    case ( 'T', 't', '1', 'Y', 'y' ) ; x = .true.
+    case ( 'F', 'f', '0', 'N', 'n' ) ; x = .false.
     end select
   end subroutine
 
