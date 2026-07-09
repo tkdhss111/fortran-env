@@ -82,7 +82,8 @@ the raw process environment, which keeps it portable and leak-safe.
 ```fortran
 n = env%load ( '/srv/data/tkd-config/data-paths.env' )   ! .env  -> env vars ($VAR expanded)
 n = env%save ( 'out.env', 'DIR_TKD_' )                   ! tracked DIR_TKD_* -> .env (podman --env-file)
-n = env%save_sh ( 'setenv.sh', 'DIR_TKD_' )              ! ... or a runnable `export` script — `source` it
+n = env%save_sh  ( 'setenv.sh',   'DIR_TKD_' )           ! ... or a runnable `export` script — `source` it
+n = env%clear_sh ( 'clearenv.sh', 'DIR_TKD_' )           ! ... and its undo: a runnable `unset` script
 call env%unset ( 'TMP_VAR' )                             ! unsetenv + untrack
 ```
 
@@ -91,9 +92,10 @@ so far (line by line, like `source`), an unset reference becoming empty. So the 
 `DIR_TKD_AMEDAS=$DIR_DATA/tkd-wx-jma-amedas` resolves in-process — `env_mo` can replace the
 `gen-resolved-paths.sh` generator. Use `expand` directly for one string.
 
-**Two writers.** `save` emits plain `KEY=VALUE` (podman `--env-file`, quadlet `EnvironmentFile`);
+**Three writers.** `save` emits plain `KEY=VALUE` (podman `--env-file`, quadlet `EnvironmentFile`);
 `save_sh` emits a runnable `#!/bin/sh` script of `export NAME='value'` lines (sh-safe quoting, marked
-executable) that you `source` to set the vars in your shell.
+executable) that you `source` to set the vars in your shell; `clear_sh` emits the matching `unset NAME`
+script to clear them again.
 
 Names are validated on the way in — `load`/`load_namelist` skip any key that isn't a POSIX identifier.
 Check inputs yourself with `is_name` / `bad_char`:
@@ -122,6 +124,7 @@ if ( env%bad_char ( code, '0123456789ABCDEF' ) /= 0 ) .. ! or against your own a
 | `load(file)` | plain `.env` file → env vars (keys verbatim, values `$VAR`-expanded); returns count |
 | `save(file[, prefix])` | write tracked vars to a `.env` file (`KEY=VALUE`), optionally prefix-filtered; returns count |
 | `save_sh(file[, prefix])` | write tracked vars to a runnable `export` shell script (`+x`); returns count |
+| `clear_sh(file[, prefix])` | write a runnable `unset` shell script (`+x`) — the undo for `save_sh`; returns count |
 
 ## Test
 

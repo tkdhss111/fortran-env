@@ -193,6 +193,19 @@ program unit_test
   call check_l ( found,         .true., 'save_sh wrote a plain export line' )
   call check_l ( secret_leaked, .true., 'save_sh escaped an embedded single quote' )
 
+  ! --- 16. clear_sh: runnable `unset` script (undo for save_sh) ---
+  n = env%clear_sh ( 'env_mo_clear.sh', 'SH_' )
+  call check_i ( n, 2, 'clear_sh writes 2 unset lines' )
+  found = .false.
+  open ( newunit = u, file = 'env_mo_clear.sh', status = 'old', action = 'read' )
+  do
+    read ( u, '(a)', iostat = ios ) line
+    if ( ios /= 0 ) exit
+    if ( trim(line) == 'unset SH_A' ) found = .true.
+  end do
+  close ( u )
+  call check_l ( found, .true., 'clear_sh wrote an unset line' )
+
   print *, '================================='
   if ( nfail == 0 ) then
     print *, 'ALL TESTS PASSED'
